@@ -1,13 +1,21 @@
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Body
 import numpy as np
 from scipy.spatial import distance as dist
+from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
 
 EAR_THRESHOLD = 0.21
 
 
 
 app = FastAPI()
+origins = [
+    #react endpoint url
+    "http://localhost:5173"
+]
+#orgins bellow are the same as above only allow communication with this endpoint, allow all methods and headers can restrict from using delete method
 
+app.add_middleware(CORSMiddleware,allow_origins=origins,allow_credentials=True, allow_methods=["*"],allow_headers=["*"])
 def calcEAR(eyedataset):
    
     # Calculate the Eye Aspect Ratio (EAR) using the provided eye data
@@ -36,25 +44,30 @@ def calcEAR(eyedataset):
     top = dist.euclidean(points[1], points[5]) + dist.euclidean(points[2], points[4])
     bottom = 2.0 * dist.euclidean(points[0], points[3])
     ear = top / bottom
-    print(ear)
+   
     return ear
     
     
 @app.get("/")
-def home():
-    return {"message": "Welcome to the Randomizer API"}
+def read_root():
+    return {"Hello": "World"}
+
+
 
 @app.post("/eye")
-def get_eye_coordinates(eyedata:dict):
-   
-    leftEye = calcEAR(eyedata.get("left"))
-    rightEye = calcEAR(eyedata.get("right"))
-    
-    avrEar =(leftEye+rightEye)/2
-    open= avrEar < EAR_THRESHOLD
-    if open:
-        is_eye_open = "true"
-    else:
-        is_eye_open = "false"
-    
-    return {"eyeclosed": is_eye_open}
+def get_eye_coordinates(eyedata: dict = Body(...)):
+    left = eyedata.get("left")
+    right = eyedata.get("right")
+    if not left or not right:
+        raise HTTPException(status_code=400, detail="Missing 'left' or 'right' eye data")
+
+    try:
+        leftEye = calcEAR(left)
+        rightEye = calcEAR(right)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid eye coordinates format")
+
+    avrEar = (leftEye + rightEye) / 2
+    is_eye_closed = avrEar < EAR_THRESHOLD
+    return {"eyeclosed": is_eye_closed}
+
