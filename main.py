@@ -1,12 +1,16 @@
-from fastapi import FastAPI, HTTPException, Query, Body
+from fastapi import FastAPI, HTTPException, Query, Body,WebSocket
 import numpy as np
 from scipy.spatial import distance as dist
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+from blinkDetection import DataCollection
+import time
+
 
 EAR_THRESHOLD = 0.21
 
 
+collection = DataCollection(1)
 
 app = FastAPI()
 origins = [
@@ -70,4 +74,43 @@ def get_eye_coordinates(eyedata: dict = Body(...)):
     avrEar = (leftEye + rightEye) / 2
     is_eye_closed = avrEar < EAR_THRESHOLD
     return {"eyeclosed": is_eye_closed}
+
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    
+    await websocket.accept()
+    while True:
+        data = await websocket.receive_json()
+        left = data.get("left")
+        right = data.get("right")
+       
+        if not left or not right:
+            await websocket.send_json({"error": "Missing 'left' or 'right' eye data"})
+            continue
+
+        try:
+            leftEye = calcEAR(left)
+            rightEye = calcEAR(right)
+        except Exception:
+            await websocket.send_json({"error": "Invalid eye coordinates format"})
+            continue
+
+        avrEar = (leftEye + rightEye) / 2
+        is_eye_closed = avrEar < EAR_THRESHOLD 
+        print(is_eye_closed,collection.closed_eye)
+        if is_eye_closed and not collection.closed_eye:
+        
+            timestamp = time.time()
+           
+            
+            if len(collection.blink_timestamps) <2 or (timestamp- collection.blink_timestamps[0])<10.0:
+            
+                collection.addTimestamp(timestamp)
+            else:
+                collection.store_data()
+        collection.closed_eye = is_eye_closed
+        await websocket.send_json({"eyeclosed": is_eye_closed})
+        
+        
 
