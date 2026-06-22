@@ -1,22 +1,22 @@
-from fastapi import FastAPI, HTTPException, Query, Body,WebSocket
+from fastapi import FastAPI, HTTPException, Query, Body,WebSocket,WebSocketDisconnect
 import numpy as np
 from scipy.spatial import distance as dist
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from blinkDetection import DataCollection
 import time
+import asyncio
+import os
+
 
 
 EAR_THRESHOLD = 0.21
-
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
 collection = DataCollection(1)
 
 app = FastAPI()
-origins = [
-    #react endpoint url
-    "http://localhost:5173"
-]
+origins = [FRONTEND_URL]
 #orgins bellow are the same as above only allow communication with this endpoint, allow all methods and headers can restrict from using delete method
 
 app.add_middleware(CORSMiddleware,allow_origins=origins,allow_credentials=True, allow_methods=["*"],allow_headers=["*"])
@@ -58,28 +58,14 @@ def read_root():
 
 
 
-@app.post("/eye")
-def get_eye_coordinates(eyedata: dict = Body(...)):
-    left = eyedata.get("left")
-    right = eyedata.get("right")
-    if not left or not right:
-        raise HTTPException(status_code=400, detail="Missing 'left' or 'right' eye data")
 
-    try:
-        leftEye = calcEAR(left)
-        rightEye = calcEAR(right)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid eye coordinates format")
-
-    avrEar = (leftEye + rightEye) / 2
-    is_eye_closed = avrEar < EAR_THRESHOLD
-    return {"eyeclosed": is_eye_closed}
 
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     
     await websocket.accept()
+  
     while True:
         data = await websocket.receive_json()
         left = data.get("left")
@@ -98,7 +84,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
         avrEar = (leftEye + rightEye) / 2
         is_eye_closed = avrEar < EAR_THRESHOLD 
-        print(is_eye_closed,collection.closed_eye)
+     
         if is_eye_closed and not collection.closed_eye:
         
             timestamp = time.time()
@@ -111,6 +97,62 @@ async def websocket_endpoint(websocket: WebSocket):
                 collection.store_data()
         collection.closed_eye = is_eye_closed
         await websocket.send_json({"eyeclosed": is_eye_closed})
+        
+        
+@app.websocket("/test")
+async def websocket_test_endpoint(websocket: WebSocket):
+    
+    await websocket.accept()
+    Index = 0
+    normalData = [0,1,0,0,0,1,1,0,0,0,0,0,1,0,0,0,0,0,0,0]
+    abnormalData=[1,0,0,0,1,1,1,1,1,1,1,1,0,1,1,1,1,1,1,0]
+    state = {"index":0,"mode":"normal"}
+    
+    async def mode_change():
+        try:
+            while True:
+                data = await websocket.receive_json()
+                t = data.get("type")
+                
+                state["mode"] = t
+        except WebSocketDisconnect:
+            print("disconnected")
+            
+    
+    receiver = asyncio.create_task(mode_change())
+    try:
+        while True:
+            mode = state["mode"]
+            Index = state["index"]
+            if mode == "normal":
+                if Index < len(normalData):
+                    prediction = normalData[Index]
+                    state["index"]+=1
+                else:
+                    state["index"] = 0
+            else:
+                if Index < len(abnormalData):
+                    prediction = abnormalData[Index]
+                    state["index"]+=1
+                else:
+                    state["index"] = 0
+            
+            await websocket.send_json({"pred": prediction})
+            print("sent")
+            
+            await asyncio.sleep(1)
+    except WebSocketDisconnect:
+        print("Sender loop: Client disconnected.")
+    except Exception as e:
+        print(f"Sender loop exception: {e}")
+    finally:
+        # 6. Strict Cleanup (Prevents "Ghost Connections" / Memory leaks)
+        # Forcefully cancels the background listener task when the socket cuts
+        receiver.cancel()
+        print("WebSocket cleaned up and connection closed.")
+            
+        
+        
         
         
 
