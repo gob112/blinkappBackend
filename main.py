@@ -1,8 +1,8 @@
-from fastapi import FastAPI, HTTPException, Query, Body,WebSocket,WebSocketDisconnect
-import numpy as np
+from fastapi import FastAPI,WebSocket,WebSocketDisconnect
+
 from scipy.spatial import distance as dist
 from fastapi.middleware.cors import CORSMiddleware
-import uvicorn
+
 from blinkDetection import DataCollection
 import time
 import asyncio
@@ -13,7 +13,7 @@ import os
 EAR_THRESHOLD = 0.21
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
-collection = DataCollection(1)
+collection = DataCollection(0)
 
 app = FastAPI()
 origins = [FRONTEND_URL]
@@ -63,40 +63,40 @@ def read_root():
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    
+    print('started')
     await websocket.accept()
-  
-    while True:
-        data = await websocket.receive_json()
-        left = data.get("left")
-        right = data.get("right")
-       
-        if not left or not right:
-            await websocket.send_json({"error": "Missing 'left' or 'right' eye data"})
-            continue
 
-        try:
-            leftEye = calcEAR(left)
-            rightEye = calcEAR(right)
-        except Exception:
-            await websocket.send_json({"error": "Invalid eye coordinates format"})
-            continue
+    try:
+        while True:
+            data = await websocket.receive_json()
+            left = data.get("left")
+            right = data.get("right")
 
-        avrEar = (leftEye + rightEye) / 2
-        is_eye_closed = avrEar < EAR_THRESHOLD 
-     
-        if is_eye_closed and not collection.closed_eye:
-        
-            timestamp = time.time()
-           
-            
-            if len(collection.blink_timestamps) <2 or (timestamp- collection.blink_timestamps[0])<10.0:
-            
-                collection.addTimestamp(timestamp)
-            else:
-                collection.store_data()
-        collection.closed_eye = is_eye_closed
-        await websocket.send_json({"eyeclosed": is_eye_closed})
+            if not left or not right:
+                await websocket.send_json({"error": "Missing 'left' or 'right' eye data"})
+                continue
+
+            try:
+                leftEye = calcEAR(left)
+                rightEye = calcEAR(right)
+            except Exception:
+                await websocket.send_json({"error": "Invalid eye coordinates format"})
+                continue
+
+            avrEar = (leftEye + rightEye) / 2
+            is_eye_closed = avrEar < EAR_THRESHOLD
+
+            if is_eye_closed and not collection.closed_eye:
+                timestamp = time.time()
+
+                if len(collection.blink_timestamps) < 2 or (timestamp - collection.blink_timestamps[0]) < 10.0:
+                    collection.addTimestamp(timestamp)
+                else:
+                    collection.store_data()
+            collection.closed_eye = is_eye_closed
+            await websocket.send_json({"eyeclosed": is_eye_closed})
+    except WebSocketDisconnect:
+        print("Client disconnected from websocket")
         
         
 @app.websocket("/test")
@@ -138,7 +138,7 @@ async def websocket_test_endpoint(websocket: WebSocket):
                     state["index"] = 0
             
             await websocket.send_json({"pred": prediction})
-            print("sent")
+            
             
             await asyncio.sleep(1)
     except WebSocketDisconnect:
